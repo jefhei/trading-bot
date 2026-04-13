@@ -45,3 +45,6 @@ logs/
 # OS
 .DS_Store
 Thumbs.db
+
+# Project-specific
+claude_stock_trading.pdf
