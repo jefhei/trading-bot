@@ -1,0 +1,211 @@
+Sure! Here's a comprehensive breakdown of the Wheel Strategy bot as described in the transcript:
+
+---
+
+## What Is the Wheel Strategy?
+
+The Wheel Strategy is an options-based income strategy where you act as the **insurance company** rather than the insurance buyer. Instead of paying premiums, you **collect** them at every stage. The name comes from the fact that the strategy cycles continuously — like a spinning wheel — generating income regardless of whether the stock goes up, down, or sideways.
+
+---
+
+## Understanding Options First
+
+Before diving into the strategy itself, the transcript uses a helpful analogy to explain options:
+
+### The Insurance Analogy
+
+| Insurance | Options |
+|---|---|
+| Pay $100/month premium | Pay premium to another trader |
+| Right to file a claim if something goes wrong | Right to buy/sell a stock at a locked price |
+| If you crash, insurance covers it | If stock moves your way, you profit |
+| If nothing happens, they keep your $100 | If stock doesn't move your way, contract expires |
+
+### The Two Types of Options
+
+**Call Option**
+- Gives you the right to **buy** a stock at a locked-in price (strike price)
+- Example: Apple is at $200. You buy a call with a $210 strike price. If Apple rises to $230, you can buy it at $210 and pocket the $20 difference. If Apple stays below $210, the contract expires and you lose only the premium paid.
+
+**Put Option**
+- Gives you the right to **sell** a stock at a locked-in price
+- Example: You own Apple at $200. You buy a put with a $190 strike price. If Apple drops to $170, you can still sell at $190, protecting yourself from the drop.
+
+### Selling Options (The Key Insight)
+When you **sell** options rather than buy them, you flip the table and become the insurance company:
+- Someone pays **you** a premium upfront
+- If the stock doesn't hit the strike price by expiration, the contract dies and you keep everything
+- Insurance companies make billions this way — collecting premiums from millions of people and paying out on only a small percentage of claims
+- The math works in your favor over time
+
+---
+
+## The Two Stages of the Wheel
+
+### Stage 1 – Selling Cash-Secured Puts
+
+**Goal:** Get paid to agree to buy a stock you already want, at a price you're happy with.
+
+**How it works (Tesla example from transcript):**
+- Tesla is trading at $250
+- You'd rather buy it at $230
+- You sell a put option at the $230 strike price
+- Someone hands you $5 per share = **$500 in your pocket immediately**
+
+**Two possible outcomes:**
+
+| Outcome | What Happens | Result |
+|---|---|---|
+| Tesla stays above $230 | Contract expires worthless | You keep the $500 and repeat |
+| Tesla drops below $230 | You must buy 100 shares | You buy at an effective cost of $225 (because you already collected $500) |
+
+The key insight: if you get assigned (forced to buy), you actually got the stock at a **discount** — $225 instead of $230 — because of the premium you collected upfront. And you wanted it anyway.
+
+---
+
+### Stage 2 – Selling Covered Calls
+
+**Goal:** Generate income from shares you already own, while setting a profitable exit price.
+
+**How it works (continuing the Tesla example):**
+- You now own 100 Tesla shares at an effective cost of $225
+- You sell a covered call at a $260 strike price
+- Someone pays you another $5 per share = **another $500 collected**
+
+**Two possible outcomes:**
+
+| Outcome | What Happens | Result |
+|---|---|---|
+| Tesla stays below $260 | Contract expires worthless | Keep shares + keep $500, sell another call |
+| Tesla rises above $260 | Your shares get sold at $260 | Lock in gains and go back to Stage 1 |
+
+**If shares get called away, here's the full math:**
+
+| Source | Amount |
+|---|---|
+| Stock gain ($225 cost → $260 sale) | $35/share |
+| Premium from selling the put | $5/share |
+| Premium from selling the covered call | $5/share |
+| **Total profit** | **$45/share** |
+| **On 100 shares** | **$4,500** |
+
+Once the shares are sold, you go **right back to Stage 1** — sell another put, collect another premium, and the wheel keeps spinning.
+
+---
+
+## The Full Cycle Visualized
+
+```
+START
+  ↓
+Sell Cash-Secured Put → Collect Premium
+  ↓
+If expires worthless → Sell another Put (repeat Stage 1)
+  ↓
+If assigned (stock drops to strike) → You buy shares at a discount
+  ↓
+Sell Covered Call → Collect Premium
+  ↓
+If expires worthless → Sell another Call (repeat Stage 2)
+  ↓
+If shares called away (stock rises to strike) → Shares sold at profit
+  ↓
+Go back to START → Wheel keeps spinning
+```
+
+---
+
+## How Claude Automates It
+
+The transcript provides a detailed prompt given to Claude for full automation. Here's what Claude is instructed to do:
+
+### Stage 1 Rules
+- Sell a cash-secured put on Tesla with a strike price **~10% below current price**
+- Pick an expiration **2 to 4 weeks out**
+- Collect the premium
+- If put expires worthless → sell another one and keep collecting
+- If assigned → move to Stage 2
+
+### Stage 2 Rules
+- Sell covered calls with a strike price **~10% above purchase cost**
+- Pick an expiration **2 to 4 weeks out**
+- Collect the premium
+- If call expires worthless → sell another one
+- If shares get called away → go back to Stage 1
+
+### Safety Rules Built In
+- **Never sell a put** unless there is enough cash to buy the shares if assigned
+- **Never sell a call** below the cost basis (what was actually paid for the shares)
+- **Track all premiums** collected across every cycle
+- **Check positions every 15 minutes** during market hours
+- **Do nothing outside market hours**
+- If a contract hits **50% profit before expiration**, close it early and lock in the gain
+- Provide a **daily summary at market close**
+
+---
+
+## Key Advantages of Using Claude
+
+The transcript highlights why Claude makes this strategy significantly more manageable:
+
+| Challenge Without Claude | How Claude Solves It |
+|---|---|
+| Picking strike prices weekly | Claude analyzes market conditions and picks automatically |
+| Tracking multiple open contracts | Claude monitors all positions every 15 minutes |
+| Remembering to roll contracts | Claude rolls them automatically when needed |
+| Calculating cost basis across cycles | Claude tracks all premiums across every rotation |
+| Staying disciplined with rules | Claude never deviates from the rules you set |
+| Managing timing of entries/exits | Claude acts instantly when conditions are met |
+
+As the transcript puts it — most people who learn the wheel strategy give up after a few weeks because the management buries them. Claude handles all of it.
+
+---
+
+## Risk Considerations
+
+### The Main Risk: A Stock That Keeps Falling
+The biggest danger with the wheel strategy is if the stock you're assigned drops significantly and keeps falling. For example:
+- You're assigned Tesla at $225
+- Tesla drops to $150 and stays there
+- Your covered calls may not generate enough premium to offset the loss
+- You're stuck holding a depreciating stock
+
+This is why the transcript emphasizes **only running the wheel on stocks you actually want to own** at the price you're targeting.
+
+### Other Risks to Keep in Mind
+
+| Risk | Description |
+|---|---|
+| **Assignment risk** | You must have enough cash to buy shares if put is exercised |
+| **Opportunity cost** | If stock rockets up past your call strike, gains are capped |
+| **Volatility risk** | Very volatile stocks make strike/expiration selection harder |
+| **Early assignment** | American-style options can be exercised before expiration |
+| **Liquidity risk** | Low-volume options may have wide bid-ask spreads |
+
+---
+
+## How It Compares to the Other Two Strategies
+
+| Feature | Trailing Stop | Copy Trading | Wheel Strategy |
+|---|---|---|---|
+| **Income type** | Capital gains | Capital gains | Regular premium income |
+| **Market direction needed** | Upward trend | Any | Sideways or mild movement |
+| **Complexity** | Low | Low | Higher |
+| **Capital required** | Lower | Lower | Higher (must cover 100 shares) |
+| **How often you get paid** | On exit | On exit | Weekly/biweekly premiums |
+| **Main risk** | Sharp drop | Stale disclosure data | Stock assigned at loss |
+| **Best for** | Growth stocks | Passive following | Income generation |
+
+---
+
+## Important Reminders
+
+- Everything in the video is demonstrated using **paper trading** (fake money)
+- Options trading involves **real financial risk** with actual capital
+- This is **not financial advice** — the transcript explicitly states this multiple times
+- The wheel strategy requires a meaningful amount of capital since you need enough cash to potentially buy **100 shares** of a stock if assigned
+- Results will vary based on market conditions, stock selection, and strike/expiration choices
+
+---
+
+Would you like to explore how all three strategies could work together as a combined portfolio system, or dive deeper into any specific aspect of the wheel strategy?

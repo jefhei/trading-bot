@@ -1,0 +1,24 @@
+https://app.alpaca.markets/account/login
+
+
+Individual Accounts
+
+Account: 015450364
+
+API Keys:
+Enpoint: https://api.alpaca.markets
+
+
+Paper Accounts
+
+Paper Account: PA3JG93DOQHX
+
+API Keys:
+Endpoint: https://paper-alpaca.markets/v2
+
+Key:
+PKJW5EPJ5DLEEXUP5EAM5FUGHR
+PKJW5EPJ5DLEEXUP5EAM5FUGHR
+
+Secret:
+EpWHeBFJpLYPiqWynNwYZLNyixH1Dd9PzjvsLpV3JfQ9

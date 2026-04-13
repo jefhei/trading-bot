@@ -1,0 +1,21 @@
+# Alpaca Trading API
+alpaca-trade-api>=3.2.0
+
+# Environment management
+python-dotenv>=1.0.0
+
+# Data handling
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Scheduling
+schedule>=1.2.0
+APScheduler>=3.10.0
+
+# Configuration
+pyyaml>=6.0
+
+# Testing (development only)
+pytest>=7.4.0
+pytest-mock>=3.11.0
+freezegun>=1.2.0

@@ -1,0 +1,126 @@
+Sure! Here's a detailed breakdown of the copy trading bot described in the transcript:
+
+---
+
+## What Is Copy Trading?
+
+Copy trading means automatically mirroring someone else's trades — when they buy, you buy; when they sell, you sell. The idea is to piggyback on the research and insider knowledge of more informed traders.
+
+---
+
+## Why Politicians?
+
+The transcript makes a compelling case for why US politicians are particularly interesting to copy:
+
+- Members of Congress are **required by law to report their stock trades** publicly
+- They sit on committees, regulate entire industries, and get briefed on policy changes **before the public hears about them**
+- They know which companies are about to get government contracts and which ones may face investigation
+- The data shows many of them **consistently beat the market**
+
+The transcript backs this up with a backtest simulation:
+
+| Strategy | Starting Capital | End Value | Return |
+|---|---|---|---|
+| S&P 500 (buy & hold) | $50,000 | $57,750 | ~15% |
+| Copying politician trades | $50,000 | $67,400 | ~34.8% |
+
+That's roughly a **2.2x return over the S&P 500** by simply copying one politician's trades.
+
+---
+
+## The Data Source: Capital Trades
+
+The service used in the video is **Capital Trades** (a free, publicly accessible website). It aggregates and organizes congressional stock trade disclosures in one place, making it easy to see:
+
+- Which politician bought or sold what
+- When the trade was made
+- What type of security was traded (stocks, options, etc.)
+
+The transcript uses an analogy to explain how Claude connects to this data — think of it like a power outlet. The insider information is running through the walls, and plugging Claude into Capital Trades lets it access and act on that data automatically.
+
+---
+
+## Step-by-Step Setup (From the Transcript)
+
+### Step 1 – Set Up a Separate Paper Trading Account
+The transcript recommends using a **separate Alpaca paper trading account** specifically for the copy trading bot, to keep strategies organized and distinct from other bots you may be running.
+
+- Go to Alpaca, create a new paper trading account (e.g., "Simon account")
+- Generate new API keys (endpoint, key, and secret)
+- Paste these into a new Claude session
+
+### Step 2 – Give Claude the Data Source
+Copy the URL of Capital Trades and paste it into Claude so it knows where to pull politician trading data from.
+
+### Step 3 – Give Claude Its Instructions
+The prompt used in the video tells Claude to:
+1. Find a politician who has been having strong recent success in the market and is actively trading
+2. Copy their trades automatically — buying and selling the same stocks and options they do
+3. Set up scheduled jobs (cron jobs) to continuously check for new trades and act on them
+
+### Step 4 – Let Claude Pick the Politician
+Interestingly, rather than manually choosing who to copy, Claude is let to **pick the politician itself** based on recent performance and trading activity. In the video, Claude selected **Michael McCaul**, citing that he was the most active and top-performing trader at the time.
+
+### Step 5 – Automate With a Schedule
+Claude sets up a recurring schedule to:
+- Check Capital Trades for new disclosures
+- Compare them against the current portfolio
+- Execute matching trades in the Alpaca paper trading account automatically
+
+---
+
+## How the Automation Works
+
+Once set up, the bot runs entirely on its own:
+
+- Claude monitors Capital Trades on a schedule
+- When a new trade disclosure appears, Claude places the same trade in your Alpaca account
+- No manual input is needed — you can check in periodically to review performance
+
+---
+
+## Key Considerations & Limitations
+
+### Disclosure Delay
+This is the biggest caveat. Politicians are not required to disclose trades *immediately* — there can be a delay of **30 to 45 days** (or sometimes longer). The transcript acknowledges this but notes that most congressional trades tend to be longer-term positions (options contracts two or more years out), meaning even a delayed copy can still capture most of the gain.
+
+### It's Still Paper Trading
+Everything demonstrated in the video uses **fake money**. Real-world results with actual capital could differ significantly.
+
+### Legality
+Copying publicly disclosed trades is **legal** — the data is public record. However, acting on non-public information yourself would be insider trading. The key distinction here is that you're using *officially reported* disclosures, not private tips.
+
+### Data Accuracy
+Capital Trades relies on politicians self-reporting. There can be errors, omissions, or amended filings that could affect the accuracy of what the bot copies.
+
+### No Guarantee of Future Performance
+The backtest simulation showing 34.8% returns is based on historical data. Past performance of any politician's trading record does not guarantee future results.
+
+---
+
+## Summary of the Bot's Logic
+
+```
+1. Connect to Alpaca paper trading account via API
+2. Monitor Capital Trades on a schedule
+3. Identify active, high-performing politician to copy
+4. When new trade disclosure appears → mirror the trade
+5. Repeat continuously during market hours
+6. Review performance periodically
+```
+
+---
+
+## How It Compares to the Other Strategies
+
+| Feature | Trailing Stop Bot | Copy Trading Bot | Wheel Strategy Bot |
+|---|---|---|---|
+| **Based on** | Your own stock picks | Politician disclosures | Options premiums |
+| **Risk level** | Moderate | Moderate | Lower (income-focused) |
+| **Requires stock selection** | Yes | No (Claude picks) | Yes |
+| **Income style** | Capital gains | Capital gains | Regular premium income |
+| **Best market condition** | Trending up | Any | Sideways or stable |
+
+---
+
+Would you like to go deeper on the wheel strategy, or explore how all three bots could work together as a combined system?

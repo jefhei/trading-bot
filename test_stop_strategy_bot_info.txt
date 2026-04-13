@@ -1,0 +1,47 @@
+Good. Now let me build the full suite.Here's a breakdown of what's in the suite and the decisions behind it.
+
+---
+
+## What's Covered
+
+**7 test classes, 38 test cases**, all using mocked Alpaca clients — no live API calls, no paper account needed to run the suite.
+
+The classes map directly to your PRD sections:
+
+`TestBracketOrderPlacement` (FR-1) covers the happy path plus the four most dangerous silent-failure modes: outside market hours, API rejection, bad symbol, and zero quantity. All four must raise explicitly, not return None or log quietly.
+
+`TestStopLossTypes` (FR-2) tests each of the three stop types independently. The ATR tests use injected candle data so you can run them without a market data subscription.
+
+`TestTakeProfitLevels` (FR-3) includes the risk-reward ratio path specifically, since that's where the math is most likely to drift from the PRD formula.
+
+`TestPositionSizing` (FR-4) is the most important class to get passing first. It includes the exact formula from US-3, the floor-to-whole-shares rule, the max position cap, and the small-account zero-share edge case — all common sources of real money bugs.
+
+`TestOrderManagement` (FR-5) covers state machine transitions and the breakeven adjustment trigger at exactly 50% of take-profit distance. Critically, it also tests the DB recovery case — bot restarts with a pre-existing open position and must not re-enter.
+
+`TestRiskParameters` (FR-6) tests the daily loss limit at under, over, and exactly-at the threshold (the boundary condition is the one most likely to be off-by-one).
+
+`TestMarketHoursGuard` uses `freezegun` to lock time so you can test after-hours and weekend blocking without waiting for the real clock.
+
+`TestResilience` covers the three failure modes from your PRD risk table: network timeout, duplicate events on reconnect, and account fetch failure.
+
+---
+
+## Before You Run It
+
+Install the test dependencies:
+```bash
+pip install pytest pytest-mock freezegun
+```
+
+The imports at the top assume this module structure:
+```
+bots/stop_strategy/
+    order_placer.py
+    position_sizer.py
+    risk_manager.py
+    order_monitor.py
+    config_loader.py
+    db.py
+```
+
+As you build each module, the corresponding test class will go from failing to passing — which gives you a natural progress tracker. Want me to scaffold any of those implementation modules next?

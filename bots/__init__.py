@@ -1,0 +1,3 @@
+"""
+Trading bots module.
+"""

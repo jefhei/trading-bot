@@ -1,0 +1,170 @@
+Here's a phased implementation and testing plan sized for a solo developer over a few weeks.
+
+---
+
+## Implementation & Testing Plan
+
+### Guiding Principles
+
+Build in strict order: **foundation → Stop Strategy → Copy Trading → Wheel**. Each bot reuses the layer below it, so skipping ahead will cost you more time than it saves. Always test on paper before touching live.
+
+---
+
+## Phase 0 — Foundation (Days 1–2)
+
+This is shared infrastructure all three bots depend on. Do it once, do it right.
+
+**Deliverables:**
+
+**Project structure**
+```
+trading/
+├── config/
+│   └── settings.yaml
+├── core/
+│   ├── alpaca_client.py      # Authenticated client wrapper
+│   ├── db.py                 # SQLite setup + schema
+│   ├── logger.py             # Structured logging
+│   └── notifier.py           # Alert stubs (print → email later)
+├── bots/
+│   ├── stop_strategy/
+│   ├── copy_trading/
+│   └── wheel_strategy/
+├── tests/
+└── requirements.txt
+```
+
+**Core tasks:**
+- Set up the Alpaca paper trading client with your API keys stored in a `.env` file (not hardcoded — this closes the security gap in your PRDs)
+- Create the SQLite schema for trades, positions, and orders upfront so all three bots share one DB
+- Write a `health_check.py` script that confirms: connection works, account is reachable, market status is readable. Run this every time before you start a session.
+
+**Gate to move on:** `health_check.py` passes cleanly.
+
+---
+
+## Phase 1 — Stop Strategy Bot (Days 3–10)
+
+Build in three layers: order placement, monitoring, then risk controls.
+
+### Week 1, Layer 1: Bracket Order Placement (Days 3–5)
+
+**Build:**
+- `place_bracket_order(symbol, qty, stop_pct, target_pct)` — wraps Alpaca's bracket order class
+- Position sizing calculator: `shares = (account_value * risk_pct) / (entry_price - stop_price)`
+- Basic config loader for `stop_strategy.yaml`
+
+**Test (paper only):**
+
+| Test Case | Expected Result |
+|---|---|
+| Buy 1 share AAPL with 5% stop, 10% target | Three orders appear in Alpaca dashboard: entry, stop, limit |
+| Submit order outside market hours | Graceful error message, no crash |
+| Request more shares than buying power allows | Rejection caught and logged |
+| Bad symbol (e.g., "APPL") | Error caught, not silently swallowed |
+
+Manual verification: log into your Alpaca paper dashboard and visually confirm the bracket orders look correct after each test.
+
+### Week 1, Layer 2: Order Monitoring (Days 6–8)
+
+**Build:**
+- SSE streaming listener for trade update events
+- State machine: `PENDING → FILLED → WATCHING → CLOSED`
+- Breakeven stop adjustment: triggers when price hits 50% of take-profit distance, cancels original stop, places new one at entry
+
+**Test:**
+- Simulate a fill by placing a market order manually in the Alpaca dashboard and confirm your listener picks it up within a few seconds
+- Confirm the breakeven adjustment fires correctly by setting a very tight take-profit target so it triggers quickly in paper trading
+- Kill the script mid-run and restart — confirm it recovers position state from the DB rather than starting blind
+
+### Week 2, Layer 3: Risk Controls & Scheduling (Days 9–10)
+
+**Build:**
+- Daily loss limit check: halt all new orders if account drawdown exceeds threshold
+- Market hours guard: bot does nothing before 9:30am or after 4pm ET
+- Scheduler using `schedule` or `APScheduler` — checks positions every 5 minutes during market hours
+
+**Test:**
+- Manually set the daily loss limit very low and confirm the bot halts and logs correctly
+- Run the scheduler overnight — confirm zero activity outside market hours in the logs
+- Let a paper trade ride for a full market session and review the end-of-day summary log
+
+**Gate to move on:** At least 3 full paper trading sessions completed with no crashes or silent failures.
+
+---
+
+## Phase 2 — Copy Trading Bot (Days 11–17)
+
+The Copy Trading Bot reuses your order placement and monitoring code from Phase 1. The new work is the signal ingestion layer.
+
+### Key build tasks:
+- Webhook receiver (Flask or FastAPI) to accept trade signals from external sources
+- Proportional sizing engine: `follower_qty = master_qty * (follower_value / master_value)`
+- Position sync on startup — query open positions and reconcile against DB on launch
+- Symbol filter (whitelist/blacklist) applied before any order is placed
+
+### Testing focus areas:
+
+**Sizing accuracy** — this is the most likely source of bugs. Write unit tests for the sizing formula covering edge cases: follower account much smaller than master, fractional share results, positions that round down to zero shares.
+
+**Signal latency** — use `time.time()` stamps to log the gap between signal receipt and order placement. Your PRD targets 2 seconds. In practice on paper, measure your actual baseline.
+
+**Filter logic** — write tests that confirm blacklisted symbols are logged but never ordered, and that asset class filters correctly reject options signals if you've configured equity-only.
+
+**Recovery test** — kill the bot while a master position is open, restart it, and confirm it correctly identifies the existing position rather than re-entering.
+
+---
+
+## Phase 3 — Wheel Strategy Bot (Days 18–25)
+
+This is the most complex bot and requires options approval on Alpaca. **Important note from your PRD review:** paper trading has limited options support on Alpaca. You'll be able to test order placement but assignment simulation is not fully supported — plan for some manual verification steps.
+
+### Build order:
+1. Options chain querier — fetch strikes, expirations, and Greeks for a given symbol
+2. Put selection engine — filter by delta (~0.30) and DTE (30–45 days)
+3. Assignment detector — listen for position changes that signal put assignment
+4. Covered call seller — activates after assignment, same selection logic
+5. Roll logic — triggered by delta threshold or DTE threshold
+6. Earnings calendar check — skip any symbol with earnings before expiration
+
+### Testing focus areas:
+
+**Strike selection logic** — unit test the put and call selection functions in isolation with mocked options chain data. Don't wait for live market data to find bugs here.
+
+**State machine transitions** — the wheel has four states (no position → short put → long stock → short call → repeat). Write a test for each valid transition and each invalid one (e.g., trying to sell a call when no shares are owned).
+
+**Roll triggers** — because rolls are hard to trigger naturally in a short test window, build a `--simulate-delta` flag that lets you inject a fake delta value to force a roll and confirm the logic fires correctly.
+
+---
+
+## Cross-Cutting Testing Checklist
+
+Run these for all three bots before considering any phase complete:
+
+- [ ] Bot survives a network interruption mid-run and reconnects
+- [ ] Bot survives a restart and correctly reads state from the DB
+- [ ] All errors are logged with timestamp, symbol, and full context — no silent failures
+- [ ] Scheduler produces zero trades outside 9:30am–4:00pm ET Monday–Friday
+- [ ] Daily loss limit halts all new orders when breached
+- [ ] Config changes (stop %, allocation %) take effect on next run without code changes
+
+---
+
+## Suggested Weekly Milestones
+
+| Week | Milestone |
+|---|---|
+| Week 1 | Foundation done + Stop Strategy bracket orders placing and logging correctly |
+| Week 2 | Stop Strategy fully monitored with breakeven adjustment, 3 full paper sessions complete |
+| Week 3 | Copy Trading Bot placing proportional orders from webhook signals |
+| Week 4 | Wheel Strategy put-selling phase working; call phase and roll logic tested in simulation |
+
+---
+
+## When to Consider Going Live
+
+Don't move to a live account until: each bot has completed at least **10 paper trading sessions** without a crash or silent failure, your daily loss limit has been tested and confirmed to halt trading, and you've reviewed at least one week of logs end-to-end.
+
+---
+
+Want me to start building out Phase 0 — the foundation code — or draft the test suite for the Stop Strategy Bot first?

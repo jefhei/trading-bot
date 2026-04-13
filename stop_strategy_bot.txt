@@ -1,0 +1,70 @@
+Sure! Here's a deeper breakdown of the trailing stop strategy, combining what's covered in the transcript with some additional context:
+
+---
+
+## What Is a Trailing Stop?
+
+A trailing stop is a risk management tool that automatically adjusts your "exit price" (the price at which you sell) as a stock moves in your favor. Unlike a fixed stop-loss — which stays at one price — a trailing stop *moves up* with the stock, locking in more profit over time while still protecting you from big losses.
+
+---
+
+## How It Works (From the PDF)
+
+The transcript walks through a clear example:
+
+You buy a stock at $100 and tell Claude: if this drops to $95, sell it. That's your floor — $5 is the most you're willing to risk on this trade.
+
+Now if the stock climbs to $110, your floor is still sitting at $95, meaning you're exposed to a $15 fall. So instead, you want Claude to move the floor up to $105 — if the stock dips and hits the new floor, you're still up $5 in profit and protected the entire time.
+
+If the stock drops right out of the gate and hits $95, you sell immediately, take the $5 loss, and still have your remaining capital to find the next opportunity.
+
+Ideally, the stock keeps climbing and every time it does, Claude drags the floor higher and higher — you can never fall back to where you started. It eventually sells at $110, giving you a 10% gain.
+
+---
+
+## The Ladder Buy Addition
+
+The transcript adds another layer on top of the trailing stop:
+
+If the stock drops by over 20–30%, Claude buys more shares — for example, 10 more shares at a 20% drop, 20 more shares at a 30% drop. This way you're getting better prices on the way down instead of just losing money.
+
+This is called **dollar-cost averaging** or **ladder buying** — you're accumulating more shares at cheaper prices, lowering your average cost basis.
+
+---
+
+## How Claude Automates It
+
+Claude is set up to check the position every five minutes from Monday to Friday during market hours. It monitors whether the floor needs to move up, whether a stop loss needs to be triggered, or whether it's time to re-enter a position — all without any manual input.
+
+---
+
+## Key Rules of the Strategy (as set in the video)
+
+| Rule | Detail |
+|---|---|
+| **Stop Loss** | Sell if stock drops 10% from purchase price |
+| **Trailing Floor** | If stock rises 10%, move floor up to 5% below current price |
+| **Floor Direction** | Floor only moves *up*, never down |
+| **Ladder Buys** | Buy more shares on significant dips (e.g., -20%, -30%) |
+| **Monitoring** | Every 5 minutes during market hours |
+
+---
+
+## Why It's Useful
+
+The core philosophy, as the transcript puts it, is:
+
+You set the rules once and Claude follows them every second of the day. You're always protected and always locking in gains. When a trade doesn't work out, you move on fast with the most amount of money still in your pocket.
+
+Claude can execute thousands of decisions faster than any human — it's executing *your* decisions, just running at a speed and discipline you never could on your own.
+
+---
+
+## Important Considerations
+
+- **It doesn't guarantee profit.** If a stock drops immediately after purchase and never recovers, the stop loss triggers and you take the loss.
+- **It works best in trending markets.** In highly volatile or sideways markets, trailing stops can trigger prematurely before a stock rebounds.
+- **The percentage thresholds matter.** Setting them too tight (e.g., 2%) can cause frequent early exits; too loose (e.g., 30%) exposes you to large losses.
+- **This is demonstrated using paper trading** (fake money), so real-world results may differ.
+
+Would you like to explore how this compares to the wheel strategy, or go deeper on any specific aspect?

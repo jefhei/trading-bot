@@ -1,0 +1,19 @@
+# Stop Strategy Bot Configuration
+stop_strategy:
+  default_stop_loss_pct: 5.0      # Default stop-loss % below entry
+  default_take_profit_pct: 10.0   # Default take-profit % above entry
+  trailing_stop_pct: 3.0          # Trailing stop distance %
+  max_position_size_pct: 10.0     # Max position as % of account
+  daily_loss_limit_pct: 5.0       # Halt trading after this % loss
+  use_trailing_stop: false        # Use trailing stops by default
+  risk_reward_ratio: 2.0          # Default R:R ratio (2:1)
+
+# Copy Trading Bot Configuration (future)
+copy_trading:
+  enabled: false
+  masters: []
+
+# Wheel Strategy Bot Configuration (future)
+wheel_strategy:
+  enabled: false
+  watchlist: []
