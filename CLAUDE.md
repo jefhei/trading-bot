@@ -2,9 +2,11 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+**Repository:** https://github.com/jefhei/trading-bot
+
 ## Project Overview
 
-Python project using the Alpaca Trading API (v3.2.0, legacy SDK) for algorithmic trading. 
+Python project using the Alpaca Trading API (alpaca-py SDK) for algorithmic trading.
 Currently building three trading bots:
 1. **Stop Strategy Bot** - Bracket orders with stop-loss and take-profit
 2. **Copy Trading Bot** - Replicate trades from master traders
