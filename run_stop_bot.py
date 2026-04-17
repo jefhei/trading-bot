@@ -59,18 +59,71 @@ Examples:
     return parser.parse_args()
 
 
+def validate_config(config: dict) -> None:
+    """
+    Validate stop strategy configuration values.
+    
+    Args:
+        config: The loaded configuration dictionary
+        
+    Raises:
+        SystemExit: If configuration is invalid with error message
+    """
+    required_keys = ["default_stop_loss_pct", "daily_loss_limit_pct", "risk_per_trade_pct", "max_position_size_pct"]
+    
+    for key in required_keys:
+        if key not in config:
+            print(f"❌ Config error: Missing required key 'stop_strategy.{key}'")
+            sys.exit(1)
+    
+    stop_pct = config.get("default_stop_loss_pct", 5.0)
+    if not 0.1 <= stop_pct <= 50.0:
+        print(f"❌ Config error: default_stop_loss_pct must be between 0.1% and 50% (got {stop_pct}%)")
+        sys.exit(1)
+    
+    risk_pct = config.get("risk_per_trade_pct", 2.0)
+    if not 0.1 <= risk_pct <= 10.0:
+        print(f"❌ Config error: risk_per_trade_pct must be between 0.1% and 10% (got {risk_pct}%)")
+        sys.exit(1)
+    
+    loss_limit = config.get("daily_loss_limit_pct", 5.0)
+    if not 1.0 <= loss_limit <= 50.0:
+        print(f"❌ Config error: daily_loss_limit_pct must be between 1% and 50% (got {loss_limit}%)")
+        sys.exit(1)
+    
+    if stop_pct > loss_limit:
+        print(f"⚠️  Warning: default_stop_loss_pct ({stop_pct}%) exceeds daily_loss_limit_pct ({loss_limit}%)")
+        print("    This means a single loss could halt trading for the day.")
+
+
 def main():
     args = parse_args()
 
     # Load configuration
-    config = load_config(args.config)
-    stop_config = config["stop_strategy"]
+    try:
+        config = load_config(args.config)
+        stop_config = config["stop_strategy"]
+    except Exception as e:
+        print(f"❌ Failed to load config: {e}")
+        sys.exit(1)
+    
+    # Validate configuration
+    validate_config(stop_config)
 
     # Get trading client
-    client = get_trading_client()
+    try:
+        client = get_trading_client()
+    except Exception as e:
+        print(f"❌ Failed to connect to Alpaca: {e}")
+        sys.exit(1)
 
     # Check market hours
-    clock = client.get_clock()
+    try:
+        clock = client.get_clock()
+    except Exception as e:
+        print(f"❌ Failed to get market clock: {e}")
+        sys.exit(1)
+
     print(f"Market status: {'OPEN' if clock.is_open else 'CLOSED'}")
     print(f"Next open: {clock.next_open}")
     print(f"Next close: {clock.next_close}")
@@ -86,9 +139,14 @@ def main():
                 return
 
     # Check risk limits
-    risk_manager = RiskManager(client, stop_config)
-    if risk_manager.is_daily_loss_limit_breached():
-        print("\n❌ Trading halted: Daily loss limit reached.")
+    try:
+        risk_manager = RiskManager(client, stop_config)
+        if risk_manager.is_daily_loss_limit_breached():
+            print("\n❌ Trading halted: Daily loss limit reached.")
+            return
+    except Exception as e:
+        print(f"\n❌ Risk check failed: {e}")
+        print("   Trading halted as precaution.")
         return
 
     # Set default values from config if not provided
@@ -105,7 +163,7 @@ def main():
         # Calculate position size from account risk
         account = client.get_account()
         account_value = float(account.equity)
-        risk_pct = stop_config.get("max_position_size_pct", 10.0) / 100
+        risk_pct = stop_config.get("risk_per_trade_pct", 2.0) / 100
 
         stop_price = entry_price * (1 - stop_pct / 100)
         stop_distance = entry_price - stop_price

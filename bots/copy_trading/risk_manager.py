@@ -1,0 +1,318 @@
+"""
+Risk management for copy trading.
+Handles allocation limits, loss limits, and drawdown controls.
+"""
+import sqlite3
+from typing import Dict, Any, Optional
+from datetime import datetime, timedelta
+from decimal import Decimal
+
+from alpaca.trading.client import TradingClient
+
+
+class CopyTradingRiskManager:
+    """
+    Manages risk controls for copy trading including allocation limits,
+    daily loss limits, and drawdown controls.
+    """
+
+    def __init__(self, db_path: str, client: TradingClient, config: Dict[str, Any]):
+        """
+        Initialize risk manager.
+
+        Args:
+            db_path: Path to SQLite database
+            client: Authenticated Alpaca TradingClient
+            config: Risk configuration dictionary
+        """
+        self.db_path = db_path
+        self.client = client
+        self.config = config
+
+        # Extract config values with defaults
+        self.max_allocation_per_master_pct = config.get("max_allocation_per_master_pct", 30.0)
+        self.max_total_allocation_pct = config.get("max_total_allocation_pct", 80.0)
+        self.daily_loss_limit_per_master_pct = config.get("daily_loss_limit_per_master_pct", 5.0)
+        self.max_drawdown_pct = config.get("max_drawdown_pct", 15.0)
+        self.min_cash_reserve_pct = config.get("min_cash_reserve_pct", 10.0)
+
+        self._init_db()
+        self._load_high_water_mark()
+
+    def _init_db(self):
+        """Initialize database tables for risk tracking."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        # Table for tracking daily P&L per master
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS copy_risk_tracking (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                master_id TEXT NOT NULL,
+                date TEXT NOT NULL,
+                daily_pnl REAL DEFAULT 0.0,
+                starting_equity REAL,
+                current_equity REAL,
+                UNIQUE(master_id, date)
+            )
+        """)
+
+        # Table for high water mark
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS copy_high_water_mark (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                value REAL NOT NULL,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        conn.commit()
+        conn.close()
+
+    def _load_high_water_mark(self):
+        """Load high water mark from database."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT value FROM copy_high_water_mark WHERE id = 1")
+        row = cursor.fetchone()
+
+        if row:
+            self._high_water_mark = row[0]
+        else:
+            # Initialize with current equity
+            account = self.client.get_account()
+            self._high_water_mark = float(account.equity)
+            self._save_high_water_mark()
+
+        conn.close()
+
+    def _save_high_water_mark(self):
+        """Save high water mark to database."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            INSERT OR REPLACE INTO copy_high_water_mark (id, value, timestamp)
+            VALUES (1, ?, ?)
+        """, (self._high_water_mark, datetime.now()))
+
+        conn.commit()
+        conn.close()
+
+    def set_high_water_mark(self, value: float):
+        """Set high water mark manually."""
+        self._high_water_mark = value
+        self._save_high_water_mark()
+
+    def get_allocated_value(self, master_id: str) -> float:
+        """
+        Get current allocated value for a master trader.
+
+        Args:
+            master_id: Master trader ID
+
+        Returns:
+            float: Total dollar value allocated to this master
+        """
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT COALESCE(SUM(qty * entry_price), 0)
+            FROM copy_positions
+            WHERE master_id = ? AND status = 'open'
+        """, (master_id,))
+
+        result = cursor.fetchone()
+        conn.close()
+
+        return result[0] if result else 0.0
+
+    def is_copying_allowed(self, master_id: str) -> bool:
+        """
+        Check if copying is allowed for a specific master.
+
+        Args:
+            master_id: Master trader ID
+
+        Returns:
+            bool: True if copying is allowed
+        """
+        # Check if daily loss limit reached
+        if self.is_daily_loss_limit_reached(master_id):
+            return False
+
+        # Check if max allocation reached
+        account = self.client.get_account()
+        account_value = float(account.equity)
+        allocated = self.get_allocated_value(master_id)
+        allocation_pct = (allocated / account_value) * 100 if account_value > 0 else 0
+
+        if allocation_pct >= self.max_allocation_per_master_pct:
+            return False
+
+        return True
+
+    def is_any_copying_allowed(self) -> bool:
+        """
+        Check if any copying is allowed (global limits).
+
+        Returns:
+            bool: True if copying is allowed
+        """
+        # Check drawdown
+        account = self.client.get_account()
+        current_equity = float(account.equity)
+
+        if self._high_water_mark > 0:
+            drawdown_pct = ((self._high_water_mark - current_equity) / self._high_water_mark) * 100
+            if drawdown_pct >= self.max_drawdown_pct:
+                return False
+
+        return True
+
+    def has_sufficient_cash(self, required_amount: float) -> bool:
+        """
+        Check if there's sufficient cash for a trade while maintaining reserve.
+
+        Args:
+            required_amount: Cash required for the trade
+
+        Returns:
+            bool: True if sufficient cash available
+        """
+        account = self.client.get_account()
+        account_value = float(account.equity)
+        cash = float(account.cash)
+
+        min_cash = account_value * (self.min_cash_reserve_pct / 100)
+        available_cash = cash - min_cash
+
+        return available_cash >= required_amount
+
+    def is_daily_loss_limit_reached(self, master_id: str) -> bool:
+        """
+        Check if daily loss limit is reached for a master.
+
+        Args:
+            master_id: Master trader ID
+
+        Returns:
+            bool: True if daily loss limit reached
+        """
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT daily_pnl, starting_equity FROM copy_risk_tracking
+            WHERE master_id = ? AND date = ?
+        """, (master_id, today))
+
+        row = cursor.fetchone()
+        conn.close()
+
+        if not row:
+            return False
+
+        daily_pnl, starting_equity = row
+
+        if starting_equity and starting_equity > 0:
+            loss_pct = abs(daily_pnl / starting_equity) * 100
+            return loss_pct >= self.daily_loss_limit_per_master_pct
+
+        return False
+
+    def record_pnl(self, master_id: str, pnl: float):
+        """
+        Record profit/loss for a master trader.
+
+        Args:
+            master_id: Master trader ID
+            pnl: Profit/loss amount (positive for profit, negative for loss)
+        """
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        # Check if record exists for today
+        cursor.execute("""
+            SELECT id, daily_pnl FROM copy_risk_tracking
+            WHERE master_id = ? AND date = ?
+        """, (master_id, today))
+
+        row = cursor.fetchone()
+
+        if row:
+            # Update existing record
+            new_pnl = row[1] + pnl
+            cursor.execute("""
+                UPDATE copy_risk_tracking
+                SET daily_pnl = ?, current_equity = current_equity + ?
+                WHERE master_id = ? AND date = ?
+            """, (new_pnl, pnl, master_id, today))
+        else:
+            # Create new record with starting equity
+            account = self.client.get_account()
+            starting_equity = float(account.equity)
+
+            cursor.execute("""
+                INSERT INTO copy_risk_tracking
+                (master_id, date, daily_pnl, starting_equity, current_equity)
+                VALUES (?, ?, ?, ?, ?)
+            """, (master_id, today, pnl, starting_equity, starting_equity + pnl))
+
+        conn.commit()
+        conn.close()
+
+        # Update high water mark if needed
+        if pnl > 0:
+            account = self.client.get_account()
+            current_equity = float(account.equity)
+            if current_equity > self._high_water_mark:
+                self._high_water_mark = current_equity
+                self._save_high_water_mark()
+
+    def get_risk_summary(self) -> Dict[str, Any]:
+        """
+        Get summary of current risk metrics.
+
+        Returns:
+            Dict with risk metrics
+        """
+        account = self.client.get_account()
+        account_value = float(account.equity)
+        cash = float(account.cash)
+
+        # Get total allocated
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT COALESCE(SUM(qty * entry_price), 0)
+            FROM copy_positions
+            WHERE status = 'open'
+        """)
+
+        total_allocated = cursor.fetchone()[0] or 0.0
+        conn.close()
+
+        # Calculate drawdown
+        drawdown_pct = 0.0
+        if self._high_water_mark > 0:
+            drawdown_pct = ((self._high_water_mark - account_value) / self._high_water_mark) * 100
+
+        return {
+            "account_value": account_value,
+            "cash": cash,
+            "total_allocated": total_allocated,
+            "allocation_pct": (total_allocated / account_value * 100) if account_value > 0 else 0,
+            "high_water_mark": self._high_water_mark,
+            "current_drawdown_pct": max(0, drawdown_pct),
+            "max_drawdown_limit_pct": self.max_drawdown_pct,
+            "min_cash_required": account_value * (self.min_cash_reserve_pct / 100),
+            "copying_allowed": self.is_any_copying_allowed()
+        }
