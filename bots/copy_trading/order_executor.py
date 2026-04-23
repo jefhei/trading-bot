@@ -4,11 +4,16 @@ Handles order placement with retry logic and failure queuing.
 """
 import sqlite3
 import time
+import logging
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import MarketOrderRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
+
+from core.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class OrderExecutor:
@@ -88,6 +93,8 @@ class OrderExecutor:
 
         last_error = None
 
+        logger.info(f"Placing order: side={side} symbol={symbol} qty={qty} max_retries={max_retries}")
+
         for attempt in range(max_retries):
             try:
                 order = self.client.submit_order(
@@ -98,6 +105,10 @@ class OrderExecutor:
                         time_in_force=TimeInForce.DAY
                     )
                 )
+
+                logger.info(f"Order placed successfully: order_id={order.id} symbol={symbol} "
+                           f"qty={qty} side={side} status={order.status} "
+                           f"filled_avg_price={order.filled_avg_price}")
 
                 return {
                     "order_id": str(order.id),
@@ -110,12 +121,17 @@ class OrderExecutor:
 
             except Exception as e:
                 last_error = str(e)
+                logger.warning(f"Order attempt {attempt + 1}/{max_retries} failed: "
+                             f"symbol={symbol} qty={qty} side={side} error={e}")
                 if attempt < max_retries - 1:
                     sleep_time = retry_delay * (2 ** attempt)
+                    logger.info(f"Retrying in {sleep_time}s...")
                     time.sleep(sleep_time)
                 continue
 
         # All retries failed
+        logger.error(f"Order failed after {max_retries} attempts: "
+                    f"symbol={symbol} qty={qty} side={side} last_error={last_error}")
         return None
 
     def place_follower_order(
@@ -140,10 +156,15 @@ class OrderExecutor:
         result = self.place_order_with_retry(symbol, qty, side)
 
         if result:
+            logger.info(f"Follower order succeeded: master_id={master_id} symbol={symbol} "
+                       f"qty={qty} side={side} order_id={result['order_id']}")
             return result
 
         # Order failed - record for later retry
-        self._record_failed_order(master_id, symbol, qty, side, "Max retries exceeded")
+        error_msg = "Max retries exceeded"
+        logger.error(f"Follower order failed after all retries: master_id={master_id} "
+                    f"symbol={symbol} qty={qty} side={side}. Queued for retry.")
+        self._record_failed_order(master_id, symbol, qty, side, error_msg)
         return None
 
     def _record_failed_order(
@@ -166,6 +187,9 @@ class OrderExecutor:
 
         conn.commit()
         conn.close()
+
+        logger.warning(f"Failed order recorded: master_id={master_id} symbol={symbol} "
+                      f"qty={qty} side={side} error=\"{error_message}\"")
 
     def queue_trade_for_retry(
         self,
@@ -194,6 +218,9 @@ class OrderExecutor:
 
         conn.commit()
         conn.close()
+
+        logger.warning(f"Trade queued for retry: master_id={master_id} symbol={symbol} "
+                      f"qty={qty} side={side}")
 
     def get_queued_trades(self) -> List[Dict[str, Any]]:
         """
@@ -234,6 +261,7 @@ class OrderExecutor:
             Dict with counts of successful and failed trades
         """
         trades = self.get_queued_trades()
+        logger.info(f"Processing {len(trades)} queued trades")
 
         successful = 0
         failed = 0
@@ -249,11 +277,16 @@ class OrderExecutor:
                 # Success - remove from queue
                 self._remove_queued_trade(trade["id"])
                 successful += 1
+                logger.info(f"Queued trade succeeded: id={trade['id']} symbol={trade['symbol']} "
+                           f"qty={trade['qty']} side={trade['side']}")
             else:
                 # Failed - increment retry count
                 self._increment_retry_count(trade["id"])
                 failed += 1
+                logger.warning(f"Queued trade failed: id={trade['id']} symbol={trade['symbol']} "
+                             f"qty={trade['qty']} side={trade['side']} retry_count={trade['retry_count'] + 1}")
 
+        logger.info(f"Queued trade processing complete: successful={successful} failed={failed}")
         return {"successful": successful, "failed": failed}
 
     def _remove_queued_trade(self, trade_id: int):
@@ -333,6 +366,7 @@ class OrderExecutor:
             int: Number of orders cancelled
         """
         try:
+            logger.info(f"Cancelling open orders{' for symbol=' + symbol if symbol else ''}")
             if symbol:
                 # Get orders for symbol and cancel them
                 orders = self.client.get_orders(symbol=symbol, status='open')
@@ -344,11 +378,14 @@ class OrderExecutor:
                 try:
                     self.client.cancel_order_by_id(order.id)
                     cancelled += 1
-                except Exception:
+                    logger.info(f"Cancelled order: id={order.id} symbol={order.symbol}")
+                except Exception as e:
+                    logger.warning(f"Failed to cancel order id={order.id}: {e}")
                     continue
 
+            logger.info(f"Cancelled {cancelled}/{len(orders)} open orders")
             return cancelled
 
         except Exception as e:
-            print(f"Error cancelling orders: {e}")
+            logger.error(f"Error cancelling orders: {e}")
             return 0
