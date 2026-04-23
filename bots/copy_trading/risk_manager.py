@@ -3,11 +3,14 @@ Risk management for copy trading.
 Handles allocation limits, loss limits, and drawdown controls.
 """
 import sqlite3
-from typing import Dict, Any, Optional
+import logging
+from typing import Dict, Any, Optional, Tuple
 from datetime import datetime, timedelta
 from decimal import Decimal
 
 from alpaca.trading.client import TradingClient
+
+logger = logging.getLogger(__name__)
 
 
 class CopyTradingRiskManager:
@@ -70,7 +73,7 @@ class CopyTradingRiskManager:
         conn.close()
 
     def _load_high_water_mark(self):
-        """Load high water mark from database."""
+        """Load high water mark from database. If API fails, use cached or default."""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
@@ -80,10 +83,17 @@ class CopyTradingRiskManager:
         if row:
             self._high_water_mark = row[0]
         else:
-            # Initialize with current equity
-            account = self.client.get_account()
-            self._high_water_mark = float(account.equity)
-            self._save_high_water_mark()
+            try:
+                # Try to get current equity from Alpaca
+                account = self.client.get_account()
+                self._high_water_mark = float(account.equity)
+                self._save_high_water_mark()
+                self._api_failure = False
+            except Exception as e:
+                logger.error(f"CRITICAL: Failed to get account for high water mark initialization: {e}. Defaulting to 0 - risk checks will HALT trading.")
+                # Default to 0 which will cause HALT (drawdown will be 100%)
+                self._high_water_mark = 0
+                self._api_failure = True
 
         conn.close()
 
@@ -104,6 +114,20 @@ class CopyTradingRiskManager:
         """Set high water mark manually."""
         self._high_water_mark = value
         self._save_high_water_mark()
+
+    def _get_account_safe(self) -> Optional[Any]:
+        """
+        Safe wrapper for Alpaca get_account() API call.
+        
+        Returns:
+            Account object if API call succeeds, None if it fails.
+        """
+        try:
+            return self.client.get_account()
+        except Exception as e:
+            logger.error(f"Risk manager API failure: {e}. HALTING all trading operations.")
+            self._api_failure = True
+            return None
 
     def get_allocated_value(self, master_id: str) -> float:
         """
@@ -144,8 +168,15 @@ class CopyTradingRiskManager:
             return False
 
         # Check if max allocation reached
-        account = self.client.get_account()
-        account_value = float(account.equity)
+        try:
+            account = self.client.get_account()
+            account_value = float(account.equity)
+            self._api_failure = False
+        except Exception as e:
+            logger.error(f"CRITICAL: get_account() failed in is_copying_allowed: {e}. HALTING trading.")
+            self._api_failure = True
+            return False
+
         allocated = self.get_allocated_value(master_id)
         allocation_pct = (allocated / account_value) * 100 if account_value > 0 else 0
 
@@ -162,8 +193,14 @@ class CopyTradingRiskManager:
             bool: True if copying is allowed
         """
         # Check drawdown
-        account = self.client.get_account()
-        current_equity = float(account.equity)
+        try:
+            account = self.client.get_account()
+            current_equity = float(account.equity)
+            self._api_failure = False
+        except Exception as e:
+            logger.error(f"CRITICAL: get_account() failed in is_any_copying_allowed: {e}. HALTING all trading.")
+            self._api_failure = True
+            return False
 
         if self._high_water_mark > 0:
             drawdown_pct = ((self._high_water_mark - current_equity) / self._high_water_mark) * 100
@@ -182,9 +219,15 @@ class CopyTradingRiskManager:
         Returns:
             bool: True if sufficient cash available
         """
-        account = self.client.get_account()
-        account_value = float(account.equity)
-        cash = float(account.cash)
+        try:
+            account = self.client.get_account()
+            account_value = float(account.equity)
+            cash = float(account.cash)
+            self._api_failure = False
+        except Exception as e:
+            logger.error(f"CRITICAL: get_account() failed in has_sufficient_cash: {e}. HALTING trading.")
+            self._api_failure = True
+            return False
 
         min_cash = account_value * (self.min_cash_reserve_pct / 100)
         available_cash = cash - min_cash
@@ -256,8 +299,15 @@ class CopyTradingRiskManager:
             """, (new_pnl, pnl, master_id, today))
         else:
             # Create new record with starting equity
-            account = self.client.get_account()
-            starting_equity = float(account.equity)
+            try:
+                account = self.client.get_account()
+                starting_equity = float(account.equity)
+                self._api_failure = False
+            except Exception as e:
+                logger.error(f"CRITICAL: get_account() failed in record_pnl (new record): {e}. Recording P&L skipped.")
+                self._api_failure = True
+                conn.close()
+                return
 
             cursor.execute("""
                 INSERT INTO copy_risk_tracking
@@ -270,8 +320,14 @@ class CopyTradingRiskManager:
 
         # Update high water mark if needed
         if pnl > 0:
-            account = self.client.get_account()
-            current_equity = float(account.equity)
+            try:
+                account = self.client.get_account()
+                current_equity = float(account.equity)
+                self._api_failure = False
+            except Exception as e:
+                logger.error(f"CRITICAL: get_account() failed in record_pnl (high water mark): {e}. High water mark not updated.")
+                self._api_failure = True
+                return
             if current_equity > self._high_water_mark:
                 self._high_water_mark = current_equity
                 self._save_high_water_mark()
@@ -283,10 +339,26 @@ class CopyTradingRiskManager:
         Returns:
             Dict with risk metrics
         """
-        account = self.client.get_account()
-        account_value = float(account.equity)
-        cash = float(account.cash)
-
+        try:
+            account = self.client.get_account()
+            account_value = float(account.equity)
+            cash = float(account.cash)
+            self._api_failure = False
+        except Exception as e:
+            logger.error(f"CRITICAL: get_account() failed in get_risk_summary: {e}. Returning partial summary.")
+            self._api_failure = True
+            return {
+                "account_value": 0,
+                "cash": 0,
+                "total_allocated": 0,
+                "allocation_pct": 0,
+                "high_water_mark": self._high_water_mark,
+                "current_drawdown_pct": 100,
+                "max_drawdown_limit_pct": self.max_drawdown_pct,
+                "min_cash_required": 0,
+                "copying_allowed": False,
+                "api_failure": True
+            }
         # Get total allocated
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
