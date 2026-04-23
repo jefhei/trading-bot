@@ -69,6 +69,14 @@ class CopyTradingRiskManager:
             )
         """)
 
+        # Add emergency_pause column to copy_masters (signal_processor creates the table)
+        try:
+            cursor.execute("""
+                ALTER TABLE copy_masters ADD COLUMN emergency_pause INTEGER DEFAULT 0
+            """)
+        except sqlite3.OperationalError:
+            pass  # Column already exists, which is fine
+
         conn.commit()
         conn.close()
 
@@ -114,6 +122,95 @@ class CopyTradingRiskManager:
         """Set high water mark manually."""
         self._high_water_mark = value
         self._save_high_water_mark()
+
+    def emergency_pause_all(self) -> bool:
+        """
+        Set emergency pause flag for all masters.
+        When set, no signals are processed and no orders are placed.
+
+        Returns:
+            bool: True if successfully set for at least one master
+        """
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            UPDATE copy_masters
+            SET emergency_pause = 1, updated_at = CURRENT_TIMESTAMP
+            WHERE enabled = 1
+        """)
+        affected = cursor.rowcount
+        conn.commit()
+        conn.close()
+
+        logger.error(f"EMERGENCY PAUSE ACTIVATED for {affected} masters. All trading halted.")
+        return affected > 0
+
+    def unpause_all(self) -> bool:
+        """
+        Clear emergency pause flag for all masters.
+
+        Returns:
+            bool: True if successfully cleared for at least one master
+        """
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            UPDATE copy_masters
+            SET emergency_pause = 0, updated_at = CURRENT_TIMESTAMP
+            WHERE emergency_pause = 1
+        """)
+        affected = cursor.rowcount
+        conn.commit()
+        conn.close()
+
+        logger.info(f"Emergency pause CLEARED for {affected} masters. Trading allowed.")
+        return affected > 0
+
+    def is_master_paused(self, master_id: str) -> bool:
+        """
+        Check if a specific master has emergency pause set.
+
+        Args:
+            master_id: Master trader ID
+
+        Returns:
+            bool: True if master is paused
+        """
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT emergency_pause FROM copy_masters WHERE id = ?
+        """, (master_id,))
+        row = cursor.fetchone()
+        conn.close()
+
+        if row is None:
+            # Master not found in table, assume not paused
+            return False
+
+        return bool(row[0])
+
+    def _check_any_emergency_pause(self) -> bool:
+        """
+        Check if ANY enabled master has emergency pause set.
+
+        Returns:
+            bool: True if any master is paused
+        """
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT COUNT(*) FROM copy_masters
+            WHERE enabled = 1 AND emergency_pause = 1
+        """)
+        paused_count = cursor.fetchone()[0]
+        conn.close()
+
+        return paused_count > 0
 
     def _get_account_safe(self) -> Optional[Any]:
         """
@@ -167,6 +264,11 @@ class CopyTradingRiskManager:
         if self.is_daily_loss_limit_reached(master_id):
             return False
 
+        # Check if this master has emergency pause set
+        if self.is_master_paused(master_id):
+            logger.warning(f"Master {master_id} has emergency pause set. Copying denied.")
+            return False
+
         # Check if max allocation reached
         try:
             account = self.client.get_account()
@@ -192,6 +294,11 @@ class CopyTradingRiskManager:
         Returns:
             bool: True if copying is allowed
         """
+        # Check if ANY master has emergency pause set — this halts all copying immediately
+        if self._check_any_emergency_pause():
+            logger.error("EMERGENCY PAUSE active. All copying halted.")
+            return False
+
         # Check drawdown
         try:
             account = self.client.get_account()
