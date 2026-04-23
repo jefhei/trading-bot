@@ -3,12 +3,18 @@ Signal processing for copy trading.
 Handles incoming trade signals from master traders.
 """
 import sqlite3
+import logging
+import traceback
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Callable
 import json
 
 from alpaca.trading.client import TradingClient
+
+from core.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -261,6 +267,9 @@ class SignalProcessor:
         Returns:
             bool: True if signal was processed
         """
+        logger.info(f"Processing signal: master={signal.master_id} symbol={signal.symbol} "
+                   f"side={signal.side} qty={signal.qty} price={signal.price}")
+
         received_at = datetime.now()
 
         # Log the signal
@@ -293,15 +302,22 @@ class SignalProcessor:
         # Check if master is enabled
         master = self.get_master(signal.master_id)
         if not master or not master.get("enabled"):
+            logger.warning(f"Signal ignored — master {signal.master_id} is disabled or not found")
             return False
 
         # Notify all registered handlers
+        handler_count = len(self._signal_handlers)
+        handler_errors = 0
         for handler in self._signal_handlers:
             try:
                 handler(signal)
             except Exception as e:
-                # Log error but continue to other handlers
-                print(f"Error in signal handler: {e}")
+                handler_errors += 1
+                logger.error(f"Error in signal handler for master={signal.master_id} "
+                           f"symbol={signal.symbol}: {e}\n{traceback.format_exc()}")
+
+        if handler_errors > 0:
+            logger.warning(f"Signal processed with {handler_errors}/{handler_count} handler errors")
 
         # Mark as processed
         conn = sqlite3.connect(self.db_path)
@@ -315,6 +331,8 @@ class SignalProcessor:
         conn.commit()
         conn.close()
 
+        logger.info(f"Signal processed: db_id={signal_db_id} latency={latency_ms}ms "
+                   f"handlers={handler_count - handler_errors}/{handler_count}")
         return True
 
     def _record_latency(self, signal_id: int, latency_ms: int):
