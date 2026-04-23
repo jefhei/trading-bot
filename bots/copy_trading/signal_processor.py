@@ -382,6 +382,105 @@ class SignalProcessor:
         conn.commit()
         conn.close()
 
+    def process_queued_signals(self, max_retries: int = 3) -> Dict[str, int]:
+        """
+        Attempt to process all queued signals. Dequeues signals, rebuilds them,
+        and re-runs process_signal(). On failure, increments retry_count or
+        discards exceeded max_retries.
+
+        Args:
+            max_retries: Maximum retry attempts before discarding
+
+        Returns:
+            Dict with counts of successful, failed, and discarded signals
+        """
+        queued = self.get_queued_signals()
+        if not queued:
+            logger.info("No queued signals to retry")
+            return {"successful": 0, "failed": 0, "discarded": 0}
+
+        logger.info(f"Processing {len(queued)} queued signals")
+
+        success = 0
+        failed = 0
+        discarded = 0
+
+        for item in queued:
+            try:
+                # Rebuild Signal from stored data
+                data = self._get_raw_signal_data(item["id"])
+                if not data:
+                    logger.warning(f"Queued signal id={item['id']} has no stored data, discarding")
+                    self._remove_queued_signal(item["id"])
+                    discarded += 1
+                    continue
+
+                signal = Signal(
+                    master_id=item["master_id"],
+                    symbol=data["symbol"],
+                    side=data["side"],
+                    qty=data["qty"],
+                    price=data["price"],
+                    timestamp=datetime.fromisoformat(data["timestamp"]),
+                    order_id=data["order_id"],
+                    asset_class=data.get("asset_class", "us_equity")
+                )
+
+                result = self.process_signal(signal)
+                if result:
+                    self._remove_queued_signal(item["id"])
+                    success += 1
+                    logger.info(f"Queued signal retried successfully: id={item['id']} "
+                               f"master={item['master_id']} symbol={data['symbol']}")
+                else:
+                    new_retry = item.get("retry_count", 0) + 1
+                    if new_retry >= max_retries:
+                        logger.error(f"Queued signal discarded after {new_retry} retries: "
+                                   f"id={item['id']} master={item['master_id']}")
+                        self._remove_queued_signal(item["id"])
+                        discarded += 1
+                    else:
+                        self._increment_queued_signal_retry(item["id"])
+                        failed += 1
+                        logger.warning(f"Queued signal retry failed (attempt {new_retry}/{max_retries}): "
+                                     f"id={item['id']} master={item['master_id']}")
+            except Exception as e:
+                logger.error(f"Unexpected error processing queued signal id={item['id']}: {e}")
+                failed += 1
+
+        logger.info(f"Queued signal processing complete: success={success} failed={failed} discarded={discarded}")
+        return {"successful": success, "failed": failed, "discarded": discarded}
+
+    def _get_raw_signal_data(self, queue_id: int) -> Optional[Dict[str, Any]]:
+        """Get raw signal_data JSON for a queued signal."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT signal_data FROM copy_signal_queue WHERE id = ?", (queue_id,))
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            return json.loads(row[0])
+        return None
+
+    def _remove_queued_signal(self, queue_id: int):
+        """Remove a signal from the retry queue."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM copy_signal_queue WHERE id = ?", (queue_id,))
+        conn.commit()
+        conn.close()
+
+    def _increment_queued_signal_retry(self, queue_id: int):
+        """Increment retry_count for a queued signal."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE copy_signal_queue SET retry_count = retry_count + 1 WHERE id = ?",
+            (queue_id,)
+        )
+        conn.commit()
+        conn.close()
+
     def get_queued_signals(self) -> List[Dict[str, Any]]:
         """
         Get signals waiting to be retried.
