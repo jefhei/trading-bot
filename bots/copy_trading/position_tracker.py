@@ -146,14 +146,11 @@ class PositionTracker:
         if qty is not None:
             close_qty = min(qty, remaining_qty)
         elif master_closed_qty is not None:
-            # Proportional close based on master's close
-            # Get master position to calculate ratio
-            cursor.execute("""
-                SELECT master_entry_qty FROM copy_positions
-                WHERE master_id = ? AND symbol = ?
-            """, (master_id, symbol))
-            # For now, simple proportional: close same percentage
-            close_qty = int(remaining_qty * (master_closed_qty / total_qty))
+            # Proportional close based on master's close.
+            # We don't store master_entry_qty, so approximate using follower's total_qty
+            # as a proxy. This closes the same qty proportion of the follower's remaining
+            # position as the master closed of theirs.
+            close_qty = round(remaining_qty * (master_closed_qty / total_qty))
         else:
             close_qty = remaining_qty  # Full close
 
