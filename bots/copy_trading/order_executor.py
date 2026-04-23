@@ -16,6 +16,61 @@ from core.logger import get_logger
 logger = get_logger(__name__)
 
 
+def is_retryable_error(error: Exception) -> tuple:
+    """
+    Determine if an Alpaca API error is retryable.
+
+    Retryable: rate limits (429), server errors (5xx), timeouts, connection errors
+    Non-retryable: client errors (400/401/403/404/422), insufficient funds, invalid symbols
+
+    Returns:
+        Tuple of (is_retryable: bool, error_category: str)
+    """
+    from alpaca.common.exceptions import APIError
+
+    error_str = str(error).lower()
+
+    # Retryable: rate limits
+    if "429" in error_str or "rate limit" in error_str:
+        return True, "rate_limited"
+
+    # Retryable: server errors
+    if any(code in error_str for code in ["500", "502", "503", "504"]):
+        return True, "server_error"
+
+    # Retryable: timeouts and connection errors
+    if "timeout" in error_str or "timed out" in error_str:
+        return True, "timeout"
+    if isinstance(error, (ConnectionError, TimeoutError, OSError)):
+        return True, "connection_error"
+
+    # Retryable: Alpaca APIError with 5xx status
+    if isinstance(error, APIError):
+        status = getattr(error, 'status_code', None) or getattr(error, 'code', None)
+        if status and str(status).startswith("5"):
+            return True, "server_error"
+        if status and str(status) == "429":
+            return True, "rate_limited"
+
+    # Non-retryable: client errors (4xx)
+    if "401" in error_str or "unauthorized" in error_str:
+        return False, "unauthorized"
+    if "403" in error_str or "forbidden" in error_str:
+        return False, "forbidden"
+    if "insufficient" in error_str or "not enough" in error_str or "buying power" in error_str:
+        return False, "insufficient_funds"
+    if "invalid symbol" in error_str or "asset is not active" in error_str or "not found" in error_str:
+        return False, "invalid_symbol"
+    if "400" in error_str or "bad request" in error_str:
+        return False, "bad_request"
+    if "422" in error_str or "unprocessable" in error_str:
+        return False, "unprocessable"
+
+    # Unknown errors — retry to be safe
+    logger.warning(f"Unknown error type, treating as retryable: {error}")
+    return True, "unknown"
+
+
 class OrderExecutor:
     """
     Executes orders with retry logic and failure handling.
@@ -121,8 +176,17 @@ class OrderExecutor:
 
             except Exception as e:
                 last_error = str(e)
-                logger.warning(f"Order attempt {attempt + 1}/{max_retries} failed: "
-                             f"symbol={symbol} qty={qty} side={side} error={e}")
+                retryable, error_category = is_retryable_error(e)
+
+                if not retryable:
+                    # Non-retryable error — fail immediately
+                    logger.error(f"Order failed with non-retryable error [{error_category}]: "
+                                f"symbol={symbol} qty={qty} side={side} error={e}")
+                    return None
+
+                logger.warning(f"Order attempt {attempt + 1}/{max_retries} failed "
+                             f"[{error_category}]: symbol={symbol} qty={qty} side={side} error={e}")
+
                 if attempt < max_retries - 1:
                     sleep_time = retry_delay * (2 ** attempt)
                     logger.info(f"Retrying in {sleep_time}s...")
