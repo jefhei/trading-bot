@@ -5,7 +5,9 @@ Handles order placement with retry logic and failure queuing.
 import sqlite3
 import time
 import logging
-from datetime import datetime
+import threading
+from collections import deque
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import MarketOrderRequest
@@ -14,6 +16,84 @@ from alpaca.trading.enums import OrderSide, TimeInForce
 from core.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+class RateLimiter:
+    """
+    Token bucket rate limiter for Alpaca API calls.
+
+    Alpaca standard tier limits:
+    - 200 requests per minute
+    - 3 requests per second
+
+    This limiter enforces a rolling window per-second cap to stay well under limits.
+    """
+
+    def __init__(self, max_requests_per_second: float = 2.0, max_requests_per_minute: int = 150):
+        """
+        Initialize rate limiter.
+
+        Args:
+            max_requests_per_second: Max requests allowed per second (below Alpaca's 3/sec)
+            max_requests_per_minute: Max requests allowed per minute (below Alpaca's 200/min)
+        """
+        self.max_rps = max_requests_per_second
+        self.max_rpm = max_requests_per_minute
+        self._requests: deque = deque()  # timestamps of recent requests
+        self._lock = threading.Lock()
+
+    def acquire(self, timeout: float = 30.0) -> bool:
+        """
+        Wait for rate limit window to allow a request.
+
+        Args:
+            timeout: Max seconds to wait for rate limit clearance
+
+        Returns:
+            True if request was allowed, False if timeout expired
+        """
+        start = time.monotonic()
+
+        while time.monotonic() - start < timeout:
+            with self._lock:
+                now = time.monotonic()
+                # Prune old timestamps beyond the 1-minute window
+                cutoff = now - 60.0
+                while self._requests and self._requests[0] < cutoff:
+                    self._requests.popleft()
+
+                # Check per-second limit
+                recent = sum(1 for t in self._requests if t > now - 1.0)
+                if recent < self.max_rps and len(self._requests) < self.max_rpm:
+                    self._requests.append(now)
+                    return True
+
+                # Calculate wait time until next slot is available
+                if self._requests:
+                    next_slot = self._requests[0] + 60.0 - now
+                    wait = max(0.1, min(next_slot, 1.0))  # At least 100ms, at most 1s
+                else:
+                    wait = 0.1
+
+            time.sleep(wait)
+
+        logger.warning(f"Rate limiter timeout after {timeout}s — request queue blocked")
+        return False
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Get current rate limiter stats."""
+        with self._lock:
+            now = time.monotonic()
+            recent_1s = sum(1 for t in self._requests if t > now - 1.0)
+            recent_60s = len(self._requests)
+
+        return {
+            "requests_last_second": recent_1s,
+            "requests_last_minute": recent_60s,
+            "max_per_second": self.max_rps,
+            "max_per_minute": self.max_rpm,
+            "utilization_pct": round((recent_60s / self.max_rpm) * 100, 1)
+        }
 
 
 def is_retryable_error(error: Exception) -> tuple:
@@ -76,16 +156,18 @@ class OrderExecutor:
     Executes orders with retry logic and failure handling.
     """
 
-    def __init__(self, client: TradingClient, db_path: str):
+    def __init__(self, client: TradingClient, db_path: str, rate_limiter: Optional['RateLimiter'] = None):
         """
         Initialize order executor.
 
         Args:
             client: Authenticated Alpaca TradingClient
             db_path: Path to SQLite database
+            rate_limiter: Optional RateLimiter instance. If None, creates one with defaults.
         """
         self.client = client
         self.db_path = db_path
+        self._rate_limiter = rate_limiter or RateLimiter()
         self._init_db()
 
     def _init_db(self):
@@ -149,6 +231,12 @@ class OrderExecutor:
         last_error = None
 
         logger.info(f"Placing order: side={side} symbol={symbol} qty={qty} max_retries={max_retries}")
+
+        # Respect rate limit before submitting
+        if not self._rate_limiter.acquire():
+            logger.error("Order submission blocked by rate limiter timeout. "
+                        f"symbol={symbol} qty={qty} side={side}")
+            return None
 
         for attempt in range(max_retries):
             try:
@@ -430,6 +518,11 @@ class OrderExecutor:
             int: Number of orders cancelled
         """
         try:
+            # Respect rate limit before making API calls
+            if not self._rate_limiter.acquire():
+                logger.error("Cancel orders blocked by rate limiter timeout")
+                return 0
+
             logger.info(f"Cancelling open orders{' for symbol=' + symbol if symbol else ''}")
             if symbol:
                 # Get orders for symbol and cancel them
