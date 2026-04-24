@@ -1,13 +1,17 @@
 """
 Position tracking for copy trading.
 Manages open positions per master trader with persistence.
+
+Note: Uses float for monetary values (entry_price, current_price, unrealized_pnl).
+SQLite stores all values as REAL (double-precision float), so using Decimal at the
+Python layer would require conversion at every DB boundary with no precision benefit.
+For most trading scenarios, float64's ~15 significant digits are sufficient.
+If sub-penny precision becomes critical, consider a different persistence layer.
 """
 import sqlite3
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from datetime import datetime
 from typing import List, Optional, Dict
-from decimal import Decimal
-
 from alpaca.trading.client import TradingClient
 
 
