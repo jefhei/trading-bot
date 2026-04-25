@@ -111,8 +111,11 @@ class PositionManager:
         cursor.execute("""
             UPDATE wheel_stock_positions
             SET status = 'called_away'
-            WHERE symbol = ? AND status = 'held' AND shares = ?
-            LIMIT 1
+            WHERE id = (
+                SELECT id FROM wheel_stock_positions
+                WHERE symbol = ? AND status = 'held' AND shares = ?
+                LIMIT 1
+            )
         """, (symbol, shares))
         conn.commit()
         conn.close()
