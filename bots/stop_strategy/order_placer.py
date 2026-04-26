@@ -89,7 +89,11 @@ def place_bracket_order(
         Exception: If API call fails
     """
     # Validate market is open
-    clock = client.get_clock()
+    try:
+        clock = client.get_clock()
+    except APIError as e:
+        logger.error(f"Failed to check market status: {e}")
+        raise Exception(f"Unable to verify market status: {e}")
     if not clock.is_open:
         raise Exception("Market is closed. Orders can only be placed during market hours.")
 
@@ -188,7 +192,11 @@ def place_trailing_stop_order(
         dict: Order response from Alpaca API
     """
     # Validate market is open
-    clock = client.get_clock()
+    try:
+        clock = client.get_clock()
+    except APIError as e:
+        logger.error(f"Failed to check market status: {e}")
+        raise Exception(f"Unable to verify market status: {e}")
     if not clock.is_open:
         raise Exception("Market is closed. Orders can only be placed during market hours.")
 
@@ -237,7 +245,11 @@ def update_stop_loss(
         dict: New order response
     """
     # Cancel existing stop order
-    client.cancel_order_by_id(order_id)
+    try:
+        client.cancel_order_by_id(order_id)
+    except APIError as e:
+        logger.error(f"Failed to cancel order {order_id}: {e}")
+        return {"error": str(e), "order_id": order_id, "status": "cancel_failed"}
 
     # Note: In a real scenario, you'd want to replace the order
     # For now, this demonstrates the cancellation part of breakeven adjustment

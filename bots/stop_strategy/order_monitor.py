@@ -2,15 +2,14 @@
 Order monitoring and state management for Stop Strategy Bot.
 Tracks order lifecycle and handles breakeven stop adjustments.
 """
-import logging
 import sqlite3
 from enum import Enum
 from typing import Dict, Optional, Any
 from alpaca.trading.client import TradingClient
 from alpaca.common.exceptions import APIError
+import logging
 
 logger = logging.getLogger(__name__)
-
 
 class OrderState(Enum):
     """Enumeration of possible order states."""
@@ -184,10 +183,7 @@ class OrderMonitor:
                 try:
                     self.client.cancel_order_by_id(stop_order_id)
                 except APIError as e:
-                    logger.error(f"Failed to cancel stop order {stop_order_id} for {order_info['symbol']}: {e}")
-                    return False
-                except Exception as e:
-                    logger.error(f"Unexpected error cancelling stop order {stop_order_id}: {e}")
+                    logger.error(f"Failed to cancel stop order {stop_order_id}: {e}")
                     return False
 
                 # Mark as triggered (new stop placement would be handled separately)

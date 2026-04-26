@@ -12,7 +12,11 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 from typing import List, Optional, Dict
+import logging
 from alpaca.trading.client import TradingClient
+from alpaca.common.exceptions import APIError
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -296,7 +300,11 @@ class PositionTracker:
             List of synchronized Position objects
         """
         # Get positions from API
-        api_positions = self.client.get_all_positions()
+        try:
+            api_positions = self.client.get_all_positions()
+        except APIError as e:
+            logger.error(f"Failed to sync positions from API: {e}")
+            return []
 
         synced_positions = []
         for api_pos in api_positions:
