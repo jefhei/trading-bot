@@ -678,18 +678,27 @@ class TestRiskParameters:
         assert ss["use_trailing_stop"] is False
         assert ss["risk_reward_ratio"] == 2.0
 
-    def test_config_missing_required_field_raises(self, tmp_path):
-        """A config file missing a required field must raise at load time,
-        not fail silently at runtime."""
-        config_file = tmp_path / "bad_settings.yaml"
+    def test_config_missing_required_field_uses_defaults(self, tmp_path, caplog):
+        """When required config fields are missing, defaults are applied
+        with warnings logged — the bot stays safe rather than crashing at startup."""
+        config_file = tmp_path / "incomplete_settings.yaml"
         config_file.write_text(
             "stop_strategy:\n"
             "  default_stop_loss_pct: 5.0\n"
-            # daily_loss_limit_pct intentionally missing
+            # most fields intentionally missing
         )
 
-        with pytest.raises((KeyError, ValueError)):
-            load_config(str(config_file))
+        config = load_config(str(config_file))
+        ss = config["stop_strategy"]
+
+        # Provided value preserved
+        assert ss["default_stop_loss_pct"] == 5.0
+        # Missing fields filled from defaults
+        assert ss["daily_loss_limit_pct"] == 5.0
+        assert ss["default_take_profit_pct"] == 10.0
+        assert ss["trailing_stop_pct"] == 3.0
+        # Warnings logged for each missing field
+        assert "Missing required field" in caplog.text
 
 
 # ===========================================================================
@@ -862,7 +871,7 @@ class TestResilience:
         """If get_account fails (e.g. API down), no orders should be placed."""
         mock_alpaca_client.get_account.side_effect = Exception("API unavailable")
 
-        with pytest.raises(Exception, match="API unavailable|account"):
+        with pytest.raises(Exception, match="Trading halted|Unable to verify risk status"):
             risk_mgr = RiskManager(
                 client=mock_alpaca_client,
                 config={
