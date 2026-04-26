@@ -35,7 +35,19 @@ class RiskManager:
         self.max_position_size_pct = config.get("max_position_size_pct", 10.0)
 
     def _get_account_with_retry(self, max_retries=3):
-        """Fetch account with retry logic for transient errors."""
+        """Fetch account with retry logic for transient errors.
+
+        Retries on APIError, ConnectionError, Timeout, and other
+        transient failures. If all retries are exhausted, raises
+        RiskError so callers can implement a fail-safe HALT.
+
+        Returns:
+            Alpaca Account object
+
+        Raises:
+            RiskError: If account data cannot be retrieved after retries
+        """
+        import time
         for attempt in range(max_retries):
             try:
                 return self.client.get_account()
@@ -43,9 +55,15 @@ class RiskManager:
                 if attempt == max_retries - 1:
                     logger.error(f"Failed to fetch account after {max_retries} attempts: {e}")
                     raise RiskError(f"Cannot fetch account data: {e}")
-                logger.warning(f"Account fetch failed (attempt {attempt + 1}), retrying...")
-                import time
+                logger.warning(f"Account fetch failed (attempt {attempt + 1}/{max_retries}), retrying...")
                 time.sleep(0.5 * (2 ** attempt))  # Exponential backoff
+            except Exception as e:
+                # Catch unexpected errors (connection issues, timeouts, etc.)
+                if attempt == max_retries - 1:
+                    logger.error(f"Failed to fetch account after {max_retries} attempts: {e}")
+                    raise RiskError(f"Cannot fetch account data: {e}")
+                logger.warning(f"Account fetch failed (attempt {attempt + 1}/{max_retries}): {e}, retrying...")
+                time.sleep(0.5 * (2 ** attempt))
 
     def is_daily_loss_limit_breached(self) -> bool:
         """
@@ -123,22 +141,42 @@ class RiskManager:
         Get account summary for risk assessment.
 
         Returns:
-            Dict with equity, cash, buying_power, and daily P&L
-            
-        Raises:
-            RiskError: If unable to fetch account data
+            Dict with equity, cash, buying_power, and daily P&L.
+            If account data cannot be retrieved, returns a safe
+            dict with trading_allowed=False (fail-safe HALT).
         """
-        account = self._get_account_with_retry()
+        try:
+            account = self._get_account_with_retry()
 
-        current_equity = float(account.equity)
-        last_equity = float(account.last_equity)
-        daily_pnl_pct = (current_equity - last_equity) / last_equity * 100
+            current_equity = float(account.equity)
+            last_equity = float(account.last_equity)
+            daily_pnl_pct = (current_equity - last_equity) / last_equity * 100
 
-        return {
-            "equity": current_equity,
-            "cash": float(account.cash),
-            "buying_power": float(account.buying_power),
-            "daily_pnl_pct": daily_pnl_pct,
-            "daily_loss_limit_pct": self.daily_loss_limit_pct,
-            "trading_allowed": not self.is_daily_loss_limit_breached(),
-        }
+            trading_allowed = True
+            try:
+                trading_allowed = not self.is_daily_loss_limit_breached()
+            except RiskError:
+                # Cannot verify risk status — fail-safe HALT
+                logger.error("Cannot verify daily loss limit — marking trading as not allowed")
+                trading_allowed = False
+
+            return {
+                "equity": current_equity,
+                "cash": float(account.cash),
+                "buying_power": float(account.buying_power),
+                "daily_pnl_pct": daily_pnl_pct,
+                "daily_loss_limit_pct": self.daily_loss_limit_pct,
+                "trading_allowed": trading_allowed,
+            }
+        except RiskError as e:
+            # Account data unavailable — fail-safe HALT
+            logger.error(f"Cannot fetch account for summary — fail-safe HALT: {e}")
+            return {
+                "equity": None,
+                "cash": None,
+                "buying_power": None,
+                "daily_pnl_pct": None,
+                "daily_loss_limit_pct": self.daily_loss_limit_pct,
+                "trading_allowed": False,
+                "error": str(e),
+            }

@@ -161,7 +161,12 @@ def main():
 
     if qty is None:
         # Calculate position size from account risk
-        account = client.get_account()
+        try:
+            account = client.get_account()
+        except Exception as e:
+            print(f"\n❌ Failed to fetch account for position sizing: {e}")
+            print("   Trading halted as precaution.")
+            return
         account_value = float(account.equity)
         risk_pct = stop_config.get("risk_per_trade_pct", 2.0) / 100
 
