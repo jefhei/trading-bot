@@ -83,6 +83,9 @@ def load_config(config_path: str) -> Dict[str, Any]:
     # Validate value ranges — log and clamp dangerous values
     _validate_config_values_with_defaults(ss_config)
 
+    # Cross-field validation — warn on dangerous config combinations
+    _validate_config_relationships(ss_config)
+
     return config
 
 
@@ -98,6 +101,61 @@ def _get_default(field: str) -> Any:
         "risk_reward_ratio": 2.0,
     }
     return defaults.get(field)
+
+
+def _validate_config_relationships(config: Dict[str, Any]) -> None:
+    """
+    Cross-field validation — warn on dangerous config combinations.
+
+    Checks that related config values form a safe set:
+    - stop_loss_pct should be less than daily_loss_limit_pct
+    - trailing_stop_pct should be less than default_stop_loss_pct
+    - risk_reward_ratio should be consistent with take_profit / stop_loss
+    """
+    stop_loss = config.get("default_stop_loss_pct", 0)
+    take_profit = config.get("default_take_profit_pct", 0)
+    trailing = config.get("trailing_stop_pct", 0)
+    daily_limit = config.get("daily_loss_limit_pct", 0)
+    risk_reward = config.get("risk_reward_ratio", 0)
+
+    # Stop loss should not exceed daily loss limit
+    if stop_loss > daily_limit:
+        logger.warning(
+            f"STOP LOSS EXCEEDS DAILY LIMIT: stop_loss={stop_loss}% > "
+            f"daily_loss_limit={daily_limit}%. A single stop-out hits the daily cap."
+        )
+
+    # Trailing stop should be tighter than the initial stop loss
+    if trailing >= stop_loss:
+        logger.warning(
+            f"TRAILING STOP NOT TIGHTER THAN INITIAL: trailing_stop={trailing}% >= "
+            f"stop_loss={stop_loss}%. Trailing stop should be narrower to protect "
+            f"unrealized gains."
+        )
+
+    # Implied R:R from take_profit / stop_loss should be reasonable
+    if stop_loss > 0:
+        implied_rr = round(take_profit / stop_loss, 2)
+        if risk_reward > 0 and abs(implied_rr - risk_reward) > 0.5:
+            logger.warning(
+                f"R:R MISMATCH: implied risk/reward={implied_rr} (take_profit/stop_loss) "
+                f"but configured risk_reward_ratio={risk_reward}. Difference > 0.5 — "
+                f"verify your expectations."
+            )
+
+    # Take profit should generally exceed stop loss (positive expectancy setup)
+    if take_profit <= stop_loss and risk_reward > 1.0:
+        logger.warning(
+            f"TAKE PROFIT NOT GREATER THAN STOP LOSS: take_profit={take_profit}% <= "
+            f"stop_loss={stop_loss}% with risk_reward_ratio={risk_reward} > 1.0. "
+            f"The configured percentages create a negative expectancy setup."
+        )
+
+    logger.info(
+        f"Config cross-validation complete. "
+        f"stop_loss={stop_loss}%, take_profit={take_profit}%, "
+        f"trailing={trailing}%, daily_limit={daily_limit}%, R:R={risk_reward}"
+    )
 
 
 def _apply_defaults(config: dict) -> Dict[str, Any]:
