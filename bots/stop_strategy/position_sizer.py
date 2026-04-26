@@ -11,17 +11,23 @@ def calculate_position_size(
     risk_pct: float,
     entry_price: float,
     stop_price: float,
+    max_position_pct: float = None,
 ) -> int:
     """
     Calculate the number of shares to buy based on risk parameters.
 
     Formula: shares = (account_value * risk_pct) / (entry_price - stop_price)
 
+    If max_position_pct is provided, the result is capped at that percentage
+    of account value — preventing tight-stop scenarios from producing
+    oversized positions.
+
     Args:
         account_value: Total account equity
         risk_pct: Percentage of account to risk (e.g., 0.02 for 2%)
         entry_price: Planned entry price
         stop_price: Stop-loss price (must be below entry_price)
+        max_position_pct: Optional max position as % of account (e.g., 10.0 for 10%)
 
     Returns:
         int: Number of shares to buy (floored to whole shares, 0 if too small)
@@ -55,6 +61,12 @@ def calculate_position_size(
 
     # Floor to whole shares (never round up - that increases risk)
     shares_int = int(shares)
+
+    # Apply position cap if provided (prevents tight-stop oversized positions)
+    if max_position_pct is not None:
+        max_position_value = account_value * (max_position_pct / 100)
+        max_shares = int(max_position_value / entry_price)
+        shares_int = min(shares_int, max_shares)
 
     # Return 0 for very small positions rather than attempting fractional
     return max(0, shares_int)

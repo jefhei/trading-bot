@@ -174,11 +174,13 @@ def main():
         stop_distance = entry_price - stop_price
 
         from bots.stop_strategy.position_sizer import calculate_position_size
+        max_pos_pct = stop_config.get("max_position_size_pct", 25.0)
         qty = calculate_position_size(
             account_value=account_value,
             risk_pct=risk_pct,
             entry_price=entry_price,
-            stop_price=stop_price
+            stop_price=stop_price,
+            max_position_pct=max_pos_pct
         )
 
         print(f"\n📊 Position sizing:")
