@@ -127,15 +127,24 @@ class OrderMonitor:
                 # Stop-loss filled - position closed
                 order_info["state"] = OrderState.CLOSED
                 self._update_db_state(parent_order_id, "CLOSED")
+                logger.info(f"Stop order {order_id} filled for {order_info['symbol']} — position closed")
             elif order_info["state"] == OrderState.PENDING:
-                order_info["state"] = OrderState.FILLED
                 order_info["filled_price"] = float(order_data.get("filled_avg_price", 0))
-                self._update_db_state(parent_order_id, "FILLED")
+                order_info["state"] = OrderState.WATCHING  # Now we watch for breakeven
+                self._update_db_state(parent_order_id, "WATCHING")
+                logger.info(f"Entry order {order_id} filled for {order_info['symbol']} at ${order_info['filled_price']:.2f}")
 
         elif event_type == "canceled":
             if order_info["state"] != OrderState.CLOSED:
                 order_info["state"] = OrderState.CLOSED
                 self._update_db_state(parent_order_id, "CLOSED")
+
+        else:
+            # Log unknown events (partial_fill, rejected, expired, etc.)
+            logger.warning(
+                f"Unknown event type '{event_type}' for order {order_id} "
+                f"({parent_order_id}). Ignoring."
+            )
 
     def check_breakeven_adjustment(
         self,
@@ -161,8 +170,8 @@ class OrderMonitor:
         if order_info.get("breakeven_triggered"):
             return False
 
-        # Must be filled to adjust
-        if order_info["state"] != OrderState.FILLED:
+        # Must be actively monitored to adjust
+        if order_info["state"] not in (OrderState.FILLED, OrderState.WATCHING):
             return False
 
         entry_price = order_info["entry_price"]
@@ -185,9 +194,16 @@ class OrderMonitor:
                 except APIError as e:
                     logger.error(f"Failed to cancel stop order {stop_order_id}: {e}")
                     return False
+                except Exception as e:
+                    logger.error(f"Unexpected error canceling stop order {stop_order_id}: {e}")
+                    return False
 
                 # Mark as triggered (new stop placement would be handled separately)
                 order_info["breakeven_triggered"] = True
+                logger.info(
+                    f"Breakeven triggered for {order_info['symbol']} @ ${current_price:.2f} "
+                    f"(entry ${entry_price:.2f}, TP ${take_profit_price:.2f})"
+                )
                 return True
 
         return False
@@ -196,26 +212,30 @@ class OrderMonitor:
         """
         Load order states from database to recover after restart.
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
 
-        cursor.execute(
-            "SELECT order_id, symbol, state, entry_price, stop_order_id "
-            "FROM orders WHERE state IN ('PENDING', 'FILLED', 'WATCHING')"
-        )
+            cursor.execute(
+                "SELECT order_id, symbol, state, entry_price, stop_order_id "
+                "FROM orders WHERE state IN ('PENDING', 'FILLED', 'WATCHING')"
+            )
 
-        for row in cursor.fetchall():
-            order_id, symbol, state, entry_price, stop_order_id = row
-            self._state[order_id] = {
-                "order_id": order_id,
-                "symbol": symbol,
-                "state": OrderState(state),
-                "entry_price": entry_price,
-                "stop_order_id": stop_order_id,
-                "breakeven_triggered": False,
-            }
+            for row in cursor.fetchall():
+                order_id, symbol, state, entry_price, stop_order_id = row
+                self._state[order_id] = {
+                    "order_id": order_id,
+                    "symbol": symbol,
+                    "state": OrderState(state),
+                    "entry_price": entry_price,
+                    "stop_order_id": stop_order_id,
+                    "breakeven_triggered": False,
+                }
 
-        conn.close()
+            conn.close()
+        except Exception as e:
+            logger.error(f"Failed to load order state from database: {e}")
+            # Don't raise — better to start with empty state than crash
 
     def _persist_order(
         self,

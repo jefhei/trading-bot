@@ -490,7 +490,7 @@ class TestOrderManagement:
     def test_order_state_transitions_pending_to_filled(self, order_monitor):
         """
         When a 'fill' event is received for a known order,
-        its state must transition from PENDING to FILLED.
+        its state must transition from PENDING to WATCHING (filled and monitored).
         """
         order_monitor.register_order("order-100", symbol="AAPL", entry_price=150.00)
         assert order_monitor.get_state("order-100") == OrderState.PENDING
@@ -500,7 +500,7 @@ class TestOrderManagement:
             "order": {"id": "order-100", "filled_avg_price": "150.50"},
         })
 
-        assert order_monitor.get_state("order-100") == OrderState.FILLED
+        assert order_monitor.get_state("order-100") == OrderState.WATCHING
 
     def test_order_state_transitions_filled_to_closed_on_stop_hit(self, order_monitor):
         """When a stop-loss leg fills, the position must be marked CLOSED."""
@@ -515,7 +515,7 @@ class TestOrderManagement:
             "event": "fill",
             "order": {"id": "order-101", "filled_avg_price": "250.00"},
         })
-        assert order_monitor.get_state("order-101") == OrderState.FILLED
+        assert order_monitor.get_state("order-101") == OrderState.WATCHING
         
         # Then fill the stop-loss order
         order_monitor.handle_event({
@@ -864,8 +864,8 @@ class TestResilience:
         order_monitor.handle_event(fill_event)
         order_monitor.handle_event(fill_event)  # duplicate
 
-        # State should still be FILLED, not broken or duplicated
-        assert order_monitor.get_state("order-600") == OrderState.FILLED
+        # State should still be WATCHING, not broken or duplicated
+        assert order_monitor.get_state("order-600") == OrderState.WATCHING
 
     def test_account_fetch_failure_halts_order_placement(self, mock_alpaca_client):
         """If get_account fails (e.g. API down), no orders should be placed."""
