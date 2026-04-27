@@ -37,6 +37,9 @@ def _is_retryable(error: Exception) -> bool:
         return True
     if isinstance(error, NonRetryableError):
         return False
+    # Our own client errors are not retryable by default
+    if isinstance(error, AlpacaClientError):
+        return False
     if isinstance(error, APIError):
         status_code = getattr(error, "status_code", None)
         return status_code == 429 or (status_code and 500 <= status_code < 600)
@@ -137,23 +140,35 @@ def is_market_open(client: TradingClient = None) -> bool:
     Check if the market is currently open.
 
     Args:
-        client: Optional existing TradingClient. If None, creates a new one.
+        client: Optional existing TradingClient. If None, creates one with retry.
 
     Returns:
         bool: True if market is open, False otherwise.
 
     Raises:
-        AlpacaClientError: If unable to check market status.
+        AlpacaClientError: If unable to check market status after retries.
     """
     if client is None:
-        client = get_trading_client()
+        try:
+            client = get_trading_client_retry()
+        except AlpacaClientError:
+            raise  # Already wrapped
+        except Exception as e:
+            raise AlpacaClientError(f"Failed to create trading client: {e}")
+
+    def _check_clock():
+        try:
+            clock = client.get_clock()
+            return clock.is_open
+        except APIError as e:
+            logger.error(f"Alpaca API error checking market hours: {e}")
+            raise AlpacaClientError(f"Failed to check market hours: {e}")
+        except Exception as e:
+            raise AlpacaClientError(f"Unexpected error checking market status: {e}")
 
     try:
-        clock = client.get_clock()
-        return clock.is_open
-    except APIError as e:
-        logger.error(f"Alpaca API error checking market hours: {e}")
-        raise AlpacaClientError(f"Failed to check market hours: {e}")
+        return _retry_on_exception(_check_clock, max_retries=2, base_delay=0.5)
+    except AlpacaClientError:
+        raise
     except Exception as e:
-        logger.error(f"Unexpected error checking market hours: {e}")
-        raise AlpacaClientError(f"Unexpected error checking market status: {e}")
+        raise AlpacaClientError(f"Failed to check market status after retries: {e}")
